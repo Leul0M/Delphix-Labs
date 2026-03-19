@@ -598,50 +598,15 @@ def install_dependencies(install_dir: Path) -> bool:
         print_error(f"Failed to install dependencies: {output}")
         return False
 
-def configure_bot(install_dir: Path) -> Optional[str]:
-    """Interactive bot configuration. Always required — cannot be skipped.
-    Returns the chosen Ollama model on success, or None on failure."""
-    # (Step header already printed by main())
-
-    # ── Telegram Bot Token (required) ─────────────────────────────────────
-    print_info("Let's configure your Telegram bot!")
-    print(f"{Colors.GRAY}    1. Open Telegram and message @BotFather{Colors.ENDC}")
-    print(f"{Colors.GRAY}    2. Send /newbot and follow instructions{Colors.ENDC}")
-    print(f"{Colors.GRAY}    3. Copy the token (looks like 123456:ABC-DEF...){Colors.ENDC}")
-    print()
-
-    token = ""
-    while True:
-        token = require_user_input(f"{Colors.CYAN}Enter your Telegram bot token: {Colors.ENDC}").strip()
-        if token and ":" in token:
-            break
-        print_error("Invalid token format. It should look like  123456789:ABCdefGHI...  (number, colon, letters).")
-        print_warning("Please try again.")
-
-    # ── Ollama Model (optional, falls back to default) ────────────────────
-    print()
-    print_info(f"Which Ollama model should the agent use?")
-    print(f"{Colors.GRAY}    Default: {DEFAULT_OLLAMA_MODEL}{Colors.ENDC}")
-    print(f"{Colors.GRAY}    Other popular options: llama3.2:3b, mistral:7b, gemma3:4b{Colors.ENDC}")
-    print(f"{Colors.GRAY}    (Press Enter to keep the default){Colors.ENDC}")
-    print()
-
-    model_input = require_user_input(
-        f"{Colors.CYAN}Ollama model [{DEFAULT_OLLAMA_MODEL}]: {Colors.ENDC}"
-    ).strip()
-    chosen_model = model_input if model_input else DEFAULT_OLLAMA_MODEL
-    print_success(f"Using model: {chosen_model}")
-
-    # ── Write .env file ────────────────────────────────────────────────────
+def configure_bot(install_dir: Path, token: str, model: str) -> None:
+    """Write the .env configuration file with the provided token and model."""
     env_path = install_dir / ".env"
     env_content = f"""TELEGRAM_BOT_TOKEN={token}
-OLLAMA_MODEL={chosen_model}
+OLLAMA_MODEL={model}
 WORKSPACE_DIR=~/agent_workspace
 """
     env_path.write_text(env_content)
-
     print_success("Configuration saved to .env")
-    return chosen_model
 
 def print_final_instructions(install_dir: Path):
     """Print final setup instructions"""
@@ -752,52 +717,73 @@ def prompt_run_agent(install_dir: Path, yes: bool = False):
 def main():
     args = parse_args()
 
-    # Warn if running non-interactively, but do NOT force --yes.
-    # Critical steps (Telegram token, model selection) always require a TTY.
-    if not is_interactive() and not args.yes:
-        print_warning("No interactive stdin detected. Critical configuration steps require a terminal.")
-        print_info("Tip: run this installer directly in a terminal, not via curl | bash.")
-
     clear()
     print_banner()
-    
-    # Determine install directory
+
+    # ── Collect ALL user inputs upfront before any automated steps ────────
+    # This ensures prompts are never interrupted by subprocess output.
+
+    # Install directory
     default_dir = Path.home() / "local-agent"
     print(f"{Colors.GRAY}Default install location: {default_dir}{Colors.ENDC}")
-    custom_dir = get_user_input(
-        f"{Colors.CYAN}Install directory [Enter for default]: {Colors.ENDC}",
-        default="",
-        yes=args.yes
+    custom_dir = require_user_input(
+        f"{Colors.CYAN}Install directory [Enter for default]: {Colors.ENDC}"
     ).strip()
-    
     install_dir = Path(custom_dir) if custom_dir else default_dir
-    
+
+    # Overwrite check
     if install_dir.exists():
-        if args.yes:
-            print_warning(f"Directory {install_dir} already exists (overwriting due to --yes)")
-            shutil.rmtree(install_dir)
-        else:
-            print_warning(f"Directory {install_dir} already exists")
-            confirm = get_user_input(
-                f"{Colors.YELLOW}Overwrite? (y/N): {Colors.ENDC}",
-                default="n",
-                yes=args.yes
-            ).lower()
-            if confirm != 'y':
-                print_info("Installation cancelled")
-                return
-            shutil.rmtree(install_dir)
-    
+        print_warning(f"Directory {install_dir} already exists")
+        confirm = require_user_input(
+            f"{Colors.YELLOW}Overwrite? (y/N): {Colors.ENDC}"
+        ).strip().lower()
+        if confirm != 'y':
+            print_info("Installation cancelled")
+            return
+
+    # Telegram bot token (required)
+    print()
+    print_info("Let's configure your Telegram bot!")
+    print(f"{Colors.GRAY}    1. Open Telegram and search for @BotFather{Colors.ENDC}")
+    print(f"{Colors.GRAY}    2. Send /newbot and follow the instructions{Colors.ENDC}")
+    print(f"{Colors.GRAY}    3. Copy the token BotFather gives you (looks like 123456:ABC-DEF...){Colors.ENDC}")
+    print()
+    bot_token = ""
+    while True:
+        bot_token = require_user_input(
+            f"{Colors.CYAN}Enter your Telegram bot token: {Colors.ENDC}"
+        ).strip()
+        if bot_token and ":" in bot_token:
+            break
+        print_error("Invalid token format. It should look like  123456789:ABCdefGHI-jkl  (digits, colon, letters).")
+        print_warning("Please try again.")
+
+    # Ollama model (optional, press Enter for default)
+    print()
+    print_info("Which Ollama model should the agent use?")
+    print(f"{Colors.GRAY}    Default: {DEFAULT_OLLAMA_MODEL}{Colors.ENDC}")
+    print(f"{Colors.GRAY}    Other options: llama3.2:3b  mistral:7b  gemma3:4b{Colors.ENDC}")
+    print(f"{Colors.GRAY}    Press Enter to use the default.{Colors.ENDC}")
+    model_input = require_user_input(
+        f"{Colors.CYAN}Ollama model [{DEFAULT_OLLAMA_MODEL}]: {Colors.ENDC}"
+    ).strip()
+    chosen_model = model_input if model_input else DEFAULT_OLLAMA_MODEL
+    print_success(f"Using model: {chosen_model}")
+    print()
+
+    # ── Now run all automated steps unattended ────────────────────────────
+    if install_dir.exists():
+        shutil.rmtree(install_dir)
     install_dir.mkdir(parents=True)
-    
+
     total_steps = 7
-    
+
     # Step 1: Check Python
     print_step(1, total_steps, "Checking Python Installation", Icons.PACKAGE)
     if not check_python_version():
         sys.exit(1)
     time.sleep(0.5)
-    
+
     # Step 2: Check/Install Ollama
     print_step(2, total_steps, "Setting up Ollama", Icons.DATABASE)
     if not check_ollama():
@@ -805,7 +791,7 @@ def main():
             print_error("Cannot continue without Ollama")
             sys.exit(1)
     time.sleep(0.5)
-    
+
     # Step 3: Start Ollama server
     print_step(3, total_steps, "Starting Ollama server", Icons.DATABASE)
     start_ollama_server(install_dir / "ollama.log")
@@ -813,27 +799,23 @@ def main():
         print_warning("Ollama server is not running properly.")
     time.sleep(0.5)
 
-    # Step 4: Configure — always required (prompts for token + model)
-    print_step(4, total_steps, "Configuration", Icons.KEY)
-    chosen_model = configure_bot(install_dir)
-    if not chosen_model:
-        print_error("Configuration failed. Cannot continue without a valid Telegram bot token.")
-        sys.exit(1)
-    time.sleep(0.5)
-
-    # Step 5: Pull the chosen model
-    print_step(5, total_steps, "Downloading AI Model", Icons.GEAR)
-    if not pull_model(chosen_model or DEFAULT_OLLAMA_MODEL):
+    # Step 4: Pull the chosen model
+    print_step(4, total_steps, "Downloading AI Model", Icons.GEAR)
+    if not pull_model(chosen_model):
         print_error("Model download failed. Please check your internet connection or Ollama installation.")
         sys.exit(1)
     time.sleep(0.5)
 
-    # Step 6: Setup Project
-    print_step(6, total_steps, "Creating Project Files", Icons.FOLDER)
+    # Step 5: Create project files
+    print_step(5, total_steps, "Creating Project Files", Icons.FOLDER)
     setup_workspace(install_dir)
     if not clone_or_create_project(install_dir):
         print_error("Failed to create project files")
         sys.exit(1)
+    time.sleep(0.5)
+
+    # Step 6: Set up virtual environment and install dependencies
+    print_step(6, total_steps, "Installing Dependencies", Icons.PACKAGE)
     if not create_virtual_env(install_dir):
         print_error("Failed to create virtual environment")
         sys.exit(1)
@@ -842,9 +824,11 @@ def main():
         sys.exit(1)
     time.sleep(0.5)
 
-    # Step 7: Final instructions
+    # Step 7: Write .env and finish
+    print_step(7, total_steps, "Finalizing Configuration", Icons.KEY)
+    configure_bot(install_dir, token=bot_token, model=chosen_model)
     print_final_instructions(install_dir)
-    prompt_run_agent(install_dir, yes=args.yes)
+    run_agent(install_dir)
 
 if __name__ == "__main__":
     try:
