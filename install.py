@@ -104,15 +104,29 @@ def get_user_input(prompt: str, default: str = "", yes: bool = False) -> str:
 
 
 def require_user_input(prompt: str) -> str:
-    """Prompt the user for a REQUIRED value. Always forces TTY; cannot be bypassed."""
-    if not is_interactive():
-        print_error("This step requires interactive input. Please rerun the installer from a terminal.")
-        sys.exit(1)
+    """Prompt the user for a REQUIRED value.
+    Opens /dev/tty directly so it works even when stdin is piped."""
+    # Try /dev/tty first (works even when stdin is piped via curl | python3)
     try:
-        return input(prompt)
-    except EOFError:
-        print_error("No input available (stdin closed unexpectedly). Run this installer from a terminal.")
-        sys.exit(1)
+        with open("/dev/tty", "r") as tty:
+            sys.stdout.write(prompt)
+            sys.stdout.flush()
+            return tty.readline().rstrip("\n")
+    except (OSError, AttributeError):
+        pass
+
+    # Fallback: regular stdin (works in a plain terminal)
+    if sys.stdin.isatty():
+        try:
+            return input(prompt)
+        except EOFError:
+            pass
+
+    print_error(
+        "Cannot read input. Please run the installer directly in a terminal "
+        "(not via curl | python3 or a pipe)."
+    )
+    sys.exit(1)
 
 
 def parse_args():
@@ -587,7 +601,7 @@ def install_dependencies(install_dir: Path) -> bool:
 def configure_bot(install_dir: Path) -> Optional[str]:
     """Interactive bot configuration. Always required — cannot be skipped.
     Returns the chosen Ollama model on success, or None on failure."""
-    print_step(6, 7, "Configuration", Icons.KEY)
+    # (Step header already printed by main())
 
     # ── Telegram Bot Token (required) ─────────────────────────────────────
     print_info("Let's configure your Telegram bot!")
