@@ -526,7 +526,11 @@ def configure_bot(install_dir: Path) -> bool:
     print(f"{Colors.GRAY}    3. Copy the token (looks like 123456:ABC-DEF...){Colors.ENDC}")
     print()
     
-    token = input(f"{Colors.CYAN}Enter your bot token: {Colors.ENDC}").strip()
+    try:
+        token = input(f"{Colors.CYAN}Enter your bot token: {Colors.ENDC}").strip()
+    except EOFError:
+        print_warning("No input detected; skipping bot configuration.")
+        return False
     
     if not token or ":" not in token:
         print_error("Invalid token format")
@@ -638,7 +642,11 @@ def run_agent(install_dir: Path) -> Optional[subprocess.Popen]:
 
 
 def prompt_run_agent(install_dir: Path):
-    answer = input(f"{Colors.CYAN}Run the Delphix Labs agent now? (y/N): {Colors.ENDC}").strip().lower()
+    try:
+        answer = input(f"{Colors.CYAN}Run the Delphix Labs agent now? (y/N): {Colors.ENDC}").strip().lower()
+    except EOFError:
+        answer = "n"
+        print_info("No input detected; skipping running agent now.")
     if answer == "y":
         run_agent(install_dir)
     else:
@@ -652,13 +660,21 @@ def main():
     # Determine install directory
     default_dir = Path.home() / "local-agent"
     print(f"{Colors.GRAY}Default install location: {default_dir}{Colors.ENDC}")
-    custom_dir = input(f"{Colors.CYAN}Install directory [Enter for default]: {Colors.ENDC}").strip()
+    try:
+        custom_dir = input(f"{Colors.CYAN}Install directory [Enter for default]: {Colors.ENDC}").strip()
+    except EOFError:
+        custom_dir = ""
+        print_info("No input detected; using default install directory.")
     
     install_dir = Path(custom_dir) if custom_dir else default_dir
     
     if install_dir.exists():
         print_warning(f"Directory {install_dir} already exists")
-        confirm = input(f"{Colors.YELLOW}Overwrite? (y/N): {Colors.ENDC}").lower()
+        try:
+            confirm = input(f"{Colors.YELLOW}Overwrite? (y/N): {Colors.ENDC}").lower()
+        except EOFError:
+            confirm = "n"
+            print_info("No input detected; not overwriting.")
         if confirm != 'y':
             print_info("Installation cancelled")
             return
