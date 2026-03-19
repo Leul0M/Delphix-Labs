@@ -695,6 +695,11 @@ def prompt_run_agent(install_dir: Path, yes: bool = False):
 def main():
     args = parse_args()
 
+    # If stdin isn't a TTY (e.g. curl | bash), force non-interactive defaults.
+    if not is_interactive() and not args.yes:
+        print_info("No interactive stdin detected; running in non-interactive mode (defaults enabled).")
+        args.yes = True
+
     clear()
     print_banner()
     

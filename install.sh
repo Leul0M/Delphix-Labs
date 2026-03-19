@@ -18,6 +18,12 @@ else
   exit 1
 fi
 
+# If stdin is not a TTY (e.g. curl | bash), run installer non-interactively.
+YES_FLAG=""
+if [ ! -t 0 ]; then
+  YES_FLAG="--yes"
+fi
+
 TMP_PY=$(mktemp /tmp/delphix-install.XXXXXX.py)
 trap 'rm -f "$TMP_PY"' EXIT
 
@@ -28,4 +34,4 @@ if ! curl -fsSL "$INSTALL_PY_URL" -o "$TMP_PY"; then
 fi
 
 echo "Running installer..."
-$PYTHON_CMD "$TMP_PY" "$@"
+$PYTHON_CMD "$TMP_PY" "$@" $YES_FLAG
