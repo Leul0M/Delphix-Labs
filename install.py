@@ -118,13 +118,15 @@ def run_command(cmd: List[str], cwd: Optional[str] = None, check: bool = True) -
             cwd=cwd,
             capture_output=True,
             text=True,
-            check=check
+            check=False
         )
+        if result.returncode != 0:
+            return False, result.stderr if result.stderr else result.stdout
         return True, result.stdout
-    except subprocess.CalledProcessError as e:
-        return False, e.stderr
     except FileNotFoundError:
         return False, f"Command not found: {cmd[0]}"
+    except Exception as e:
+        return False, str(e)
 
 def check_python_version() -> bool:
     """Check if Python 3.8+ is installed"""
@@ -137,11 +139,7 @@ def check_python_version() -> bool:
 
 def check_ollama() -> bool:
     """Check if Ollama is installed"""
-    success, _ = run_command(["which", "ollama"], check=False)
-    if not success:
-        success, _ = run_command(["where", "ollama"], check=False)
-    
-    if success:
+    if shutil.which("ollama"):
         print_success("Ollama is installed")
         return True
     
@@ -172,8 +170,13 @@ def install_ollama():
         return False
     
     if success:
-        print_success("Ollama installed successfully")
-        return True
+        # Verify it is in PATH
+        if check_ollama():
+            print_success("Ollama installed successfully")
+            return True
+        else:
+            print_error("Ollama install script succeeded, but 'ollama' is not in PATH. Please restart your terminal or install manually.")
+            return False
     else:
         print_error("Failed to install Ollama automatically")
         print_info("Please install manually from https://ollama.com")
@@ -533,6 +536,8 @@ def create_virtual_env(install_dir: Path) -> bool:
     
     if not success:
         print_error(f"Failed to create virtual environment: {output}")
+        if sys.platform == "linux":
+            print_info("On Debian/Ubuntu, you may need to run: sudo apt install python3-venv")
         return False
     
     print_success("Virtual environment created")
@@ -545,6 +550,10 @@ def install_dependencies(install_dir: Path) -> bool:
     pip_cmd = str(install_dir / "venv" / "bin" / "pip")
     if sys.platform == "win32":
         pip_cmd = str(install_dir / "venv" / "Scripts" / "pip.exe")
+        
+    if not os.path.exists(pip_cmd):
+        print_error(f"pip executable not found at {pip_cmd}. Virtual environment may be corrupted.")
+        return False
     
     success, output = run_command([pip_cmd, "install", "-r", "requirements.txt"], cwd=str(install_dir), check=False)
     
@@ -748,23 +757,32 @@ def main():
             sys.exit(1)
     time.sleep(0.5)
     
-    # Step 3: Pull Model
-    print_step(3, total_steps, "Downloading AI Model", Icons.GEAR)
-    if not pull_model():
-        print_warning("Model download failed, will retry on first run")
-    time.sleep(0.5)
-    
-    # Step 4: Start Ollama server
-    print_step(4, total_steps, "Starting Ollama server", Icons.DATABASE)
+    # Step 3: Start Ollama server
+    print_step(3, total_steps, "Starting Ollama server", Icons.DATABASE)
     start_ollama_server(install_dir / "ollama.log")
+    if not is_ollama_running():
+        print_warning("Ollama server is not running properly.")
     time.sleep(0.5)
 
+    # Step 4: Pull Model
+    print_step(4, total_steps, "Downloading AI Model", Icons.GEAR)
+    if not pull_model():
+        print_error("Model download failed. Please check your internet connection or Ollama installation.")
+        sys.exit(1)
+    time.sleep(0.5)
+    
     # Step 5: Setup Project
     print_step(5, total_steps, "Creating Project Files", Icons.FOLDER)
     setup_workspace(install_dir)
-    clone_or_create_project(install_dir)
-    create_virtual_env(install_dir)
-    install_dependencies(install_dir)
+    if not clone_or_create_project(install_dir):
+        print_error("Failed to create project files")
+        sys.exit(1)
+    if not create_virtual_env(install_dir):
+        print_error("Failed to create virtual environment")
+        sys.exit(1)
+    if not install_dependencies(install_dir):
+        print_error("Failed to install dependencies")
+        sys.exit(1)
     time.sleep(0.5)
 
     # Step 6: Configure
