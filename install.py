@@ -57,7 +57,7 @@ def print_banner():
 ██████╔╝███████╗███████╗██║     ██║  ██║██║██╔╝ ██╗    ███████╗██║  ██║██████╔╝███████╗
 ╚═════╝ ╚══════╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝    ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝  
 {Colors.ENDC}
-{Colors.GRAY}    Local AI Agent Installer v1.0.0 | github.com/yourusername/local-agent-cli{Colors.ENDC}
+{Colors.GRAY}    Local AI Agent Installer v1.0.0 | github.com/Leul0M/Delphix-Labs{Colors.ENDC}
     """
     print(banner)
 

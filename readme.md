@@ -53,6 +53,12 @@ From this repository root, run:
 python install.py
 ```
 
+Or install directly from GitHub using curl:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Leul0M/Delphix-Labs/main/install.sh | bash
+```
+
 The installer will:
 
 1. Verify Python is 3.8+.
@@ -175,6 +181,22 @@ local-agent-cli/
 
 - Ensure you have a working internet connection.
 - Try updating pip: `python -m pip install --upgrade pip`
+
+---
+
+## 🧹 Uninstall
+
+To remove the installation (default directory: `~/local-agent`):
+
+```bash
+./uninstall.sh
+```
+
+Or run directly from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Leul0M/Delphix-Labs/main/uninstall.sh | bash
+```
 
 ---
 
