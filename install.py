@@ -203,7 +203,16 @@ def start_ollama_server(log_file: Optional[Path] = None) -> Optional[subprocess.
                 stderr=subprocess.STDOUT,
                 preexec_fn=os.setsid
             )
-        print_success(f"Ollama server started (PID: {proc.pid})")
+        print_success(f"Ollama server process launched (PID: {proc.pid})")
+
+        # Wait until the server is reachable before continuing.
+        for i in range(30):
+            if is_ollama_running():
+                print_success("Ollama server is running and reachable")
+                return proc
+            time.sleep(1)
+
+        print_warning("Ollama server did not respond within 30 seconds. Continuing anyway.")
         return proc
     except FileNotFoundError:
         print_error("Ollama executable not found; please install Ollama and rerun.")
