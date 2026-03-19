@@ -4,6 +4,7 @@ Local Agent CLI Installer
 One-command setup for your personal AI agent
 """
 
+import argparse
 import os
 import sys
 import subprocess
@@ -79,6 +80,35 @@ def print_warning(message: str):
 
 def print_info(message: str):
     print(f"{Colors.CYAN}ℹ️  {message}{Colors.ENDC}")
+
+
+def is_interactive() -> bool:
+    """Return True if stdin is a TTY (interactive)."""
+    return sys.stdin.isatty()
+
+
+def get_user_input(prompt: str, default: str = "", yes: bool = False) -> str:
+    """Prompt the user for input (or return default / exit in non-interactive mode)."""
+    if yes:
+        return default
+
+    if not is_interactive():
+        print_error("No interactive input available. Run this installer from a terminal, or rerun with --yes to accept defaults.")
+        sys.exit(1)
+
+    try:
+        return input(prompt)
+    except EOFError:
+        print_error("No input available (stdin closed unexpectedly). Run this installer from a terminal.")
+        sys.exit(1)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Local Agent CLI Installer")
+    parser.add_argument("-y", "--yes", action="store_true",
+                        help="Accept defaults and skip interactive prompts.")
+    return parser.parse_args()
+
 
 def run_command(cmd: List[str], cwd: Optional[str] = None, check: bool = True) -> Tuple[bool, str]:
     """Run shell command with error handling"""
@@ -525,8 +555,12 @@ def install_dependencies(install_dir: Path) -> bool:
         print_error(f"Failed to install dependencies: {output}")
         return False
 
-def configure_bot(install_dir: Path) -> bool:
-    """Interactive bot configuration"""
+def configure_bot(install_dir: Path, yes: bool = False) -> bool:
+    """Interactive bot configuration."""
+    if yes:
+        print_info("Skipping interactive bot configuration (use .env to configure later).")
+        return False
+
     print_step(6, 7, "Configuration", Icons.KEY)
     
     print_info("Let's configure your Telegram bot!")
@@ -535,12 +569,8 @@ def configure_bot(install_dir: Path) -> bool:
     print(f"{Colors.GRAY}    3. Copy the token (looks like 123456:ABC-DEF...){Colors.ENDC}")
     print()
     
-    try:
-        token = input(f"{Colors.CYAN}Enter your bot token: {Colors.ENDC}").strip()
-    except EOFError:
-        print_warning("No input detected; skipping bot configuration.")
-        return False
-    
+    token = get_user_input(f"{Colors.CYAN}Enter your bot token: {Colors.ENDC}", yes=yes).strip()
+
     if not token or ":" not in token:
         print_error("Invalid token format")
         return False
@@ -650,12 +680,12 @@ def run_agent(install_dir: Path) -> Optional[subprocess.Popen]:
         return None
 
 
-def prompt_run_agent(install_dir: Path):
-    try:
-        answer = input(f"{Colors.CYAN}Run the Delphix Labs agent now? (y/N): {Colors.ENDC}").strip().lower()
-    except EOFError:
-        answer = "n"
-        print_info("No input detected; skipping running agent now.")
+def prompt_run_agent(install_dir: Path, yes: bool = False):
+    answer = get_user_input(
+        f"{Colors.CYAN}Run the Delphix Labs agent now? (y/N): {Colors.ENDC}",
+        default="y" if yes else "",
+        yes=yes
+    ).strip().lower()
     if answer == "y":
         run_agent(install_dir)
     else:
@@ -663,31 +693,37 @@ def prompt_run_agent(install_dir: Path):
 
 
 def main():
+    args = parse_args()
+
     clear()
     print_banner()
     
     # Determine install directory
     default_dir = Path.home() / "local-agent"
     print(f"{Colors.GRAY}Default install location: {default_dir}{Colors.ENDC}")
-    try:
-        custom_dir = input(f"{Colors.CYAN}Install directory [Enter for default]: {Colors.ENDC}").strip()
-    except EOFError:
-        custom_dir = ""
-        print_info("No input detected; using default install directory.")
+    custom_dir = get_user_input(
+        f"{Colors.CYAN}Install directory [Enter for default]: {Colors.ENDC}",
+        default="",
+        yes=args.yes
+    ).strip()
     
     install_dir = Path(custom_dir) if custom_dir else default_dir
     
     if install_dir.exists():
-        print_warning(f"Directory {install_dir} already exists")
-        try:
-            confirm = input(f"{Colors.YELLOW}Overwrite? (y/N): {Colors.ENDC}").lower()
-        except EOFError:
-            confirm = "n"
-            print_info("No input detected; not overwriting.")
-        if confirm != 'y':
-            print_info("Installation cancelled")
-            return
-        shutil.rmtree(install_dir)
+        if args.yes:
+            print_warning(f"Directory {install_dir} already exists (overwriting due to --yes)")
+            shutil.rmtree(install_dir)
+        else:
+            print_warning(f"Directory {install_dir} already exists")
+            confirm = get_user_input(
+                f"{Colors.YELLOW}Overwrite? (y/N): {Colors.ENDC}",
+                default="n",
+                yes=args.yes
+            ).lower()
+            if confirm != 'y':
+                print_info("Installation cancelled")
+                return
+            shutil.rmtree(install_dir)
     
     install_dir.mkdir(parents=True)
     
@@ -727,12 +763,12 @@ def main():
     time.sleep(0.5)
 
     # Step 6: Configure
-    if not configure_bot(install_dir):
+    if not configure_bot(install_dir, yes=args.yes):
         print_warning("Configuration incomplete. Edit .env manually later.")
 
     # Step 7: Final instructions
     print_final_instructions(install_dir)
-    prompt_run_agent(install_dir)
+    prompt_run_agent(install_dir, yes=args.yes)
 
 if __name__ == "__main__":
     try:
