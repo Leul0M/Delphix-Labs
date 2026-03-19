@@ -345,7 +345,7 @@ class ShellTool(Tool):
             return f"Error: {str(e)}"
 
 class Agent:
-    def __init__(self, model: str = DEFAULT_OLLAMA_MODEL):
+    def __init__(self, model: str = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")):
         self.model = model
         self.ollama_url = "http://localhost:11434/api/chat"
         self.tools: Dict[str, Tool] = {
@@ -508,7 +508,11 @@ WORKSPACE_DIR=~/agent_workspace
     # Write run.sh
     run_script = '''#!/bin/bash
 source venv/bin/activate
-export $(cat .env | xargs)
+if [ -f .env ]; then
+    export $(cat .env | xargs)
+else
+    echo "Warning: .env file not found. Make sure OLLAMA_MODEL and TELEGRAM_BOT_TOKEN are set."
+fi
 python -m config.telegram_bot
 '''
     (install_dir / "run.sh").write_text(run_script)
@@ -517,7 +521,11 @@ python -m config.telegram_bot
     # Write run.bat for Windows
     run_bat = '''@echo off
 call venv\\\\Scripts\\\\activate.bat
-for /f "tokens=*" %%a in (.env) do set %%a
+if exist .env (
+    for /f "tokens=*" %%a in (.env) do set %%a
+) else (
+    echo Warning: .env file not found. Make sure OLLAMA_MODEL and TELEGRAM_BOT_TOKEN are set.
+)
 python -m config.telegram_bot
 '''
     (install_dir / "run.bat").write_text(run_bat)
