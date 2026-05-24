@@ -19,9 +19,15 @@ else
 fi
 
 # If stdin is not a TTY (e.g. curl | bash), run installer non-interactively.
+# Requires TELEGRAM_BOT_TOKEN in the environment before piping.
 YES_FLAG=""
 if [ ! -t 0 ]; then
   YES_FLAG="--yes"
+  if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+    echo "Error: TELEGRAM_BOT_TOKEN must be set for non-interactive install." >&2
+    echo "Example: TELEGRAM_BOT_TOKEN=123456:ABC... curl -fsSL .../install.sh | bash" >&2
+    exit 1
+  fi
 fi
 
 TMP_PY=$(mktemp /tmp/delphix-install.XXXXXX.py)

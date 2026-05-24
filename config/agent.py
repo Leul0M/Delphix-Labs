@@ -67,8 +67,8 @@ class ShellTool(Tool):
             return f"Error: {str(e)}"
 
 class Agent:
-    def __init__(self, model: str = "qwen2.5:7b"):
-        self.model = model
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
         self.ollama_url = "http://localhost:11434/api/chat"
         self.tools: Dict[str, Tool] = {
             "file_read": FileTool(),

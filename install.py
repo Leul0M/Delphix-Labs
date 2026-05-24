@@ -18,6 +18,23 @@ from typing import Optional, List, Tuple
 # Default Ollama model
 DEFAULT_OLLAMA_MODEL = "qwen3.5:4b"
 
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _configure_console_encoding() -> None:
+    """Avoid UnicodeEncodeError on Windows consoles (cp1252) when printing icons."""
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+_configure_console_encoding()
+
 # Colors for terminal
 class Colors:
     HEADER = '\033[95m'
@@ -105,26 +122,39 @@ def get_user_input(prompt: str, default: str = "", yes: bool = False) -> str:
 
 def require_user_input(prompt: str) -> str:
     """Prompt the user for a REQUIRED value.
-    Opens /dev/tty directly so it works even when stdin is piped."""
-    # Try /dev/tty first (works even when stdin is piped via curl | python3)
-    try:
-        with open("/dev/tty", "r") as tty:
-            sys.stdout.write(prompt)
-            sys.stdout.flush()
-            return tty.readline().rstrip("\n")
-    except (OSError, AttributeError):
-        pass
-
-    # Fallback: regular stdin (works in a plain terminal)
-    if sys.stdin.isatty():
+    Opens the console TTY directly so it works even when stdin is piped."""
+    if sys.platform == "win32":
+        if sys.stdin.isatty():
+            try:
+                return input(prompt)
+            except EOFError:
+                pass
         try:
-            return input(prompt)
-        except EOFError:
+            with open("CONIN$", "r") as con:
+                sys.stdout.write(prompt)
+                sys.stdout.flush()
+                return con.readline().rstrip("\n\r")
+        except OSError:
+            pass
+    else:
+        # Unix: /dev/tty works even when stdin is piped (curl | python3)
+        try:
+            with open("/dev/tty", "r") as tty:
+                sys.stdout.write(prompt)
+                sys.stdout.flush()
+                return tty.readline().rstrip("\n")
+        except (OSError, AttributeError):
             pass
 
+        if sys.stdin.isatty():
+            try:
+                return input(prompt)
+            except EOFError:
+                pass
+
     print_error(
-        "Cannot read input. Please run the installer directly in a terminal "
-        "(not via curl | python3 or a pipe)."
+        "Cannot read input. Run the installer in a terminal, or use --yes with "
+        "TELEGRAM_BOT_TOKEN set in the environment."
     )
     sys.exit(1)
 
@@ -132,7 +162,8 @@ def require_user_input(prompt: str) -> str:
 def parse_args():
     parser = argparse.ArgumentParser(description="Local Agent CLI Installer")
     parser.add_argument("-y", "--yes", action="store_true",
-                        help="Accept defaults and skip interactive prompts.")
+                        help="Non-interactive install: use defaults and require "
+                             "TELEGRAM_BOT_TOKEN (and optional OLLAMA_MODEL) in the environment.")
     return parser.parse_args()
 
 
@@ -303,233 +334,35 @@ Try: "Read the file welcome.txt"
     return workspace
 
 def clone_or_create_project(install_dir: Path) -> bool:
-    """Clone from GitHub or create local project"""
+    """Copy project files from this repository into the install directory."""
     print_info("Setting up project files...")
-    
-    # Create directory structure
+
+    config_src = REPO_ROOT / "config"
+    if not config_src.is_dir():
+        print_error(f"Missing config directory at {config_src}")
+        return False
+
     config_dir = install_dir / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Write agent.py
-    agent_code = '''import json
-import aiohttp
-import subprocess
-import os
-from typing import List, Dict, Any
-from dataclasses import dataclass
+    if config_dir.exists():
+        shutil.rmtree(config_dir)
+    shutil.copytree(config_src, config_dir)
 
-@dataclass
-class Tool:
-    name: str
-    description: str
-    parameters: Dict[str, Any]
-    
-    async def execute(self, **kwargs) -> str:
-        raise NotImplementedError
+    req_src = REPO_ROOT / "requirements.txt"
+    if req_src.is_file():
+        shutil.copy2(req_src, install_dir / "requirements.txt")
+    else:
+        print_error(f"Missing requirements.txt at {req_src}")
+        return False
 
-class FileTool(Tool):
-    def __init__(self):
-        super().__init__(
-            name="file_read",
-            description="Read contents of a file",
-            parameters={"path": {"type": "string", "description": "File path to read"}}
+    env_example_src = REPO_ROOT / "templates" / ".env.example"
+    if env_example_src.is_file():
+        shutil.copy2(env_example_src, install_dir / ".env.example")
+    else:
+        (install_dir / ".env.example").write_text(
+            f"TELEGRAM_BOT_TOKEN=your_bot_token_here\n"
+            f"OLLAMA_MODEL={DEFAULT_OLLAMA_MODEL}\n"
+            f"WORKSPACE_DIR=~/agent_workspace\n"
         )
-        self.allowed_dirs = [os.path.expanduser("~/agent_workspace"), os.getcwd()]
-    
-    async def execute(self, path: str) -> str:
-        abs_path = os.path.abspath(os.path.expanduser(path))
-        if not any(abs_path.startswith(d) for d in self.allowed_dirs):
-            return "Error: Access denied. Path must be within allowed directories."
-        try:
-            with open(abs_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        except Exception as e:
-            return f"Error reading file: {str(e)}"
-
-class ShellTool(Tool):
-    def __init__(self):
-        super().__init__(
-            name="shell",
-            description="Execute a shell command",
-            parameters={"command": {"type": "string", "description": "Shell command to execute"}}
-        )
-        self.blocked_commands = ['rm -rf /', 'mkfs', 'dd if=/dev/zero', '> /dev/sda']
-    
-    async def execute(self, command: str) -> str:
-        if any(blocked in command.lower() for blocked in self.blocked_commands):
-            return "Error: Command blocked for safety reasons."
-        try:
-            result = subprocess.run(
-                command, shell=True, capture_output=True, text=True,
-                timeout=30, cwd=os.path.expanduser("~/agent_workspace")
-            )
-            output = result.stdout if result.returncode == 0 else result.stderr
-            return f"Exit code: {result.returncode}\\\\n{output[:2000]}"
-        except subprocess.TimeoutExpired:
-            return "Error: Command timed out after 30 seconds."
-        except Exception as e:
-            return f"Error: {str(e)}"
-
-class Agent:
-    def __init__(self, model: str = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")):
-        self.model = model
-        self.ollama_url = "http://localhost:11434/api/chat"
-        self.tools: Dict[str, Tool] = {
-            "file_read": FileTool(),
-            "shell": ShellTool(),
-        }
-        self.conversation_history: List[Dict] = []
-        self.max_history = 10
-        
-    def get_system_prompt(self) -> str:
-        tools_desc = "\\\\n".join([
-            f"- {name}: {tool.description}"
-            for name, tool in self.tools.items()
-        ])
-        return f"""You are a helpful AI assistant running locally.
-Available tools:
-{tools_desc}
-
-To use a tool, respond with JSON: {{"tool": "tool_name", "parameters": {{"param": "value"}}}}
-If no tool needed, respond normally. Be concise."""
-
-    async def chat(self, message: str) -> str:
-        messages = [
-            {"role": "system", "content": self.get_system_prompt()},
-            *self.conversation_history[-self.max_history:],
-            {"role": "user", "content": message}
-        ]
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.ollama_url,
-                json={"model": self.model, "messages": messages, "stream": False, "options": {"temperature": 0.7}}
-            ) as response:
-                result = await response.json()
-                assistant_msg = result["message"]["content"]
-        
-        # Check for tool call
-        try:
-            if assistant_msg.strip().startswith("{") and "\\\"tool\\\"" in assistant_msg:
-                tool_call = json.loads(assistant_msg.strip())
-                tool_name = tool_call.get("tool")
-                parameters = tool_call.get("parameters", {})
-                
-                if tool_name in self.tools:
-                    tool_result = await self.tools[tool_name].execute(**parameters)
-                    self.conversation_history.extend([
-                        {"role": "user", "content": message},
-                        {"role": "assistant", "content": f"Used {tool_name}"}
-                    ])
-                    
-                    # Interpret result
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(
-                            self.ollama_url,
-                            json={
-                                "model": self.model,
-                                "messages": [
-                                    {"role": "system", "content": "Summarize tool result concisely."},
-                                    {"role": "user", "content": f"Tool {tool_name} returned:\\\\n{tool_result[:1000]}\\\\n\\\\nSummarize for user."}
-                                ],
-                                "stream": False
-                            }
-                        ) as resp:
-                            interp = await resp.json()
-                            summary = interp["message"]["content"]
-                            self.conversation_history.append({"role": "assistant", "content": summary})
-                            return f"🔧 Used {tool_name}:\\\\n{summary}"
-        except json.JSONDecodeError:
-            pass
-        
-        self.conversation_history.extend([
-            {"role": "user", "content": message},
-            {"role": "assistant", "content": assistant_msg}
-        ])
-        return assistant_msg
-
-_agent = None
-def get_agent():
-    global _agent
-    if _agent is None:
-        _agent = Agent()
-    return _agent
-'''
-    
-    (config_dir / "agent.py").write_text(agent_code)
-    
-    # Write telegram_bot.py
-    bot_code = '''import logging
-import asyncio
-import os
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from config.agent import get_agent
-
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TOKEN_HERE")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 Local Agent Online!\\\\n\\\\n"
-        "I can help with:\\\\n"
-        "• 📁 Reading files (~/agent_workspace)\\\\n"
-        "• 🖥️ Running shell commands\\\\n"
-        "• 💬 General chat\\\\n\\\\n"
-        "Try: 'Read welcome.txt' or 'Run ls -la'"
-    )
-
-async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    get_agent().conversation_history = []
-    await update.message.reply_text("🧹 History cleared!")
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_msg = update.message.text
-    
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    
-    try:
-        response = await get_agent().chat(user_msg)
-        if len(response) > 4000:
-            response = response[:4000] + "\\\\n... (truncated)"
-        await update.message.reply_text(response)
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("clear", clear))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    logger.info("Bot starting...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
-'''
-    
-    (config_dir / "telegram_bot.py").write_text(bot_code)
-    
-    # Write requirements.txt
-    req_content = '''fastapi==0.104.1
-uvicorn==0.24.0
-python-telegram-bot==20.7
-aiohttp==3.9.1
-pydantic==2.5.0
-python-dotenv==1.0.0
-'''
-    (install_dir / "requirements.txt").write_text(req_content)
-    
-    # Write .env.example
-    env_example = f'''# Local Agent Configuration
-TELEGRAM_BOT_TOKEN=your_bot_token_here
-OLLAMA_MODEL={DEFAULT_OLLAMA_MODEL}
-WORKSPACE_DIR=~/agent_workspace
-'''
-    (install_dir / ".env.example").write_text(env_example)
     
     # Write run.sh
     run_script = '''#!/bin/bash
@@ -714,34 +547,44 @@ def prompt_run_agent(install_dir: Path, yes: bool = False):
         print_info("You can start the agent later with ./run.sh (Linux/Mac) or run.bat (Windows)")
 
 
-def main():
-    args = parse_args()
-
-    clear()
-    print_banner()
-
-    # ── Collect ALL user inputs upfront before any automated steps ────────
-    # This ensures prompts are never interrupted by subprocess output.
-
-    # Install directory
+def collect_install_settings(yes: bool) -> Optional[Tuple[Path, str, str]]:
+    """Collect install directory, bot token, and model before automated steps."""
     default_dir = Path.home() / "local-agent"
+
+    if yes:
+        install_dir = default_dir
+        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+        if not bot_token or ":" not in bot_token:
+            print_error(
+                "Non-interactive install requires TELEGRAM_BOT_TOKEN in the environment "
+                "(format: 123456789:ABCdef...)."
+            )
+            sys.exit(1)
+        chosen_model = (
+            os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip()
+            or DEFAULT_OLLAMA_MODEL
+        )
+        if install_dir.exists():
+            print_warning(f"Directory {install_dir} already exists (will overwrite)")
+        print_success(f"Install directory: {install_dir}")
+        print_success(f"Using model: {chosen_model}")
+        return install_dir, bot_token, chosen_model
+
     print(f"{Colors.GRAY}Default install location: {default_dir}{Colors.ENDC}")
     custom_dir = require_user_input(
         f"{Colors.CYAN}Install directory [Enter for default]: {Colors.ENDC}"
     ).strip()
     install_dir = Path(custom_dir) if custom_dir else default_dir
 
-    # Overwrite check
     if install_dir.exists():
         print_warning(f"Directory {install_dir} already exists")
         confirm = require_user_input(
             f"{Colors.YELLOW}Overwrite? (y/N): {Colors.ENDC}"
         ).strip().lower()
-        if confirm != 'y':
+        if confirm != "y":
             print_info("Installation cancelled")
-            return
+            return None
 
-    # Telegram bot token (required)
     print()
     print_info("Let's configure your Telegram bot!")
     print(f"{Colors.GRAY}    1. Open Telegram and search for @BotFather{Colors.ENDC}")
@@ -755,10 +598,12 @@ def main():
         ).strip()
         if bot_token and ":" in bot_token:
             break
-        print_error("Invalid token format. It should look like  123456789:ABCdefGHI-jkl  (digits, colon, letters).")
+        print_error(
+            "Invalid token format. It should look like  123456789:ABCdefGHI-jkl  "
+            "(digits, colon, letters)."
+        )
         print_warning("Please try again.")
 
-    # Ollama model (optional, press Enter for default)
     print()
     print_info("Which Ollama model should the agent use?")
     print(f"{Colors.GRAY}    Default: {DEFAULT_OLLAMA_MODEL}{Colors.ENDC}")
@@ -770,6 +615,26 @@ def main():
     chosen_model = model_input if model_input else DEFAULT_OLLAMA_MODEL
     print_success(f"Using model: {chosen_model}")
     print()
+    return install_dir, bot_token, chosen_model
+
+
+def main():
+    args = parse_args()
+
+    if not is_interactive() and not args.yes:
+        print_warning("No interactive stdin detected.")
+        print_info(
+            "Run in a terminal, or use --yes with TELEGRAM_BOT_TOKEN set "
+            "(e.g. TELEGRAM_BOT_TOKEN=... curl -fsSL .../install.sh | bash)."
+        )
+
+    clear()
+    print_banner()
+
+    settings = collect_install_settings(args.yes)
+    if settings is None:
+        return
+    install_dir, bot_token, chosen_model = settings
 
     # ── Now run all automated steps unattended ────────────────────────────
     if install_dir.exists():
@@ -828,7 +693,7 @@ def main():
     print_step(7, total_steps, "Finalizing Configuration", Icons.KEY)
     configure_bot(install_dir, token=bot_token, model=chosen_model)
     print_final_instructions(install_dir)
-    run_agent(install_dir)
+    prompt_run_agent(install_dir, yes=args.yes)
 
 if __name__ == "__main__":
     try:
