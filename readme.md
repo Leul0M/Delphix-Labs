@@ -172,6 +172,10 @@ local-agent-cli/
 
 ## 🛠️ Troubleshooting
 
+### `Command not found: home/venv/bin/pip`
+
+The install folder was treated as a relative path named `home` (from the temp install directory), not your real home directory. **Use the latest `install.py`**, press **Enter** at the install path prompt for the default (`~/local-agent`), or type `~` — do not type only `home`.
+
 ### `Missing config directory at /tmp/config`
 
 The installer only had `install.py` in `/tmp`, not the full repo. **Use the latest `install.sh`** (it downloads `config/`, `requirements.txt`, etc.), or clone the repo and run `python install.py` from the project root.

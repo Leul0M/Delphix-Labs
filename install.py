@@ -489,14 +489,30 @@ python -m config.telegram_bot
     print_success(f"Project created at {install_dir}")
     return True
 
+def normalize_install_dir(raw: str, default: Path) -> Path:
+    """Resolve install directory; relative paths are under the user's home (not cwd)."""
+    text = (raw or "").strip()
+    if not text or text in ("~", "~/", "home"):
+        return default.expanduser().resolve()
+
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = Path.home() / path
+    return path.resolve()
+
+
 def create_virtual_env(install_dir: Path) -> bool:
     """Create Python virtual environment"""
     print_info("Creating virtual environment...")
     
     venv_path = install_dir / "venv"
     
-    # Create venv
-    success, output = run_command([sys.executable, "-m", "venv", str(venv_path)], check=False)
+    # Create venv (--upgrade-deps helps ensure pip is available)
+    success, output = run_command(
+        [sys.executable, "-m", "venv", str(venv_path)],
+        cwd=str(install_dir),
+        check=False,
+    )
     
     if not success:
         print_error(f"Failed to create virtual environment: {output}")
@@ -510,16 +526,20 @@ def create_virtual_env(install_dir: Path) -> bool:
 def install_dependencies(install_dir: Path) -> bool:
     """Install Python packages"""
     print_info("Installing dependencies (this may take a minute)...")
-    
-    pip_cmd = str(install_dir / "venv" / "bin" / "pip")
-    if sys.platform == "win32":
-        pip_cmd = str(install_dir / "venv" / "Scripts" / "pip.exe")
-        
-    if not os.path.exists(pip_cmd):
-        print_error(f"pip executable not found at {pip_cmd}. Virtual environment may be corrupted.")
+
+    python_exe = get_venv_python(install_dir)
+    if not python_exe.is_file():
+        print_error(
+            f"Virtualenv Python not found at {python_exe}. "
+            "Try: sudo apt install python3-venv  (Debian/Ubuntu)"
+        )
         return False
-    
-    success, output = run_command([pip_cmd, "install", "-r", "requirements.txt"], cwd=str(install_dir), check=False)
+
+    success, output = run_command(
+        [str(python_exe), "-m", "pip", "install", "-r", "requirements.txt"],
+        cwd=str(install_dir),
+        check=False,
+    )
     
     if success:
         print_success("Dependencies installed")
@@ -610,6 +630,10 @@ def get_venv_python(install_dir: Path) -> Path:
     """Return path to the Python executable inside the virtual environment."""
     if sys.platform == "win32":
         return install_dir / "venv" / "Scripts" / "python.exe"
+    for name in ("python", "python3"):
+        candidate = install_dir / "venv" / "bin" / name
+        if candidate.is_file():
+            return candidate
     return install_dir / "venv" / "bin" / "python"
 
 
@@ -646,10 +670,13 @@ def prompt_run_agent(install_dir: Path, yes: bool = False):
 
 def collect_install_settings(yes: bool) -> Optional[Tuple[Path, str, str]]:
     """Collect install directory, bot token, and model before automated steps."""
-    default_dir = Path.home() / "local-agent"
+    default_dir = (Path.home() / "local-agent").resolve()
 
     if yes:
-        install_dir = default_dir
+        install_dir = normalize_install_dir(
+            os.environ.get("INSTALL_DIR", ""),
+            default_dir,
+        )
         bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
         if not bot_token or ":" not in bot_token:
             print_error(
@@ -671,7 +698,8 @@ def collect_install_settings(yes: bool) -> Optional[Tuple[Path, str, str]]:
     custom_dir = require_user_input(
         f"{Colors.CYAN}Install directory [Enter for default]: {Colors.ENDC}"
     ).strip()
-    install_dir = Path(custom_dir) if custom_dir else default_dir
+    install_dir = normalize_install_dir(custom_dir, default_dir)
+    print_success(f"Install directory: {install_dir}")
 
     if install_dir.exists():
         print_warning(f"Directory {install_dir} already exists")
@@ -731,6 +759,7 @@ def main():
     if settings is None:
         return
     install_dir, bot_token, chosen_model = settings
+    install_dir = install_dir.resolve()
 
     # ── Now run all automated steps unattended ────────────────────────────
     if install_dir.exists():
