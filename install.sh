@@ -18,15 +18,18 @@ else
   exit 1
 fi
 
-# If stdin is not a TTY (e.g. curl | bash), run installer non-interactively.
-# Requires TELEGRAM_BOT_TOKEN in the environment before piping.
+# curl | bash has no stdin TTY. Two modes:
+#   - TELEGRAM_BOT_TOKEN set  -> fully non-interactive (--yes)
+#   - token not set           -> interactive prompts via /dev/tty (install.py)
 YES_FLAG=""
 if [ ! -t 0 ]; then
-  YES_FLAG="--yes"
-  if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
-    echo "Error: TELEGRAM_BOT_TOKEN must be set for non-interactive install." >&2
-    echo "Example: TELEGRAM_BOT_TOKEN=123456:ABC... curl -fsSL .../install.sh | bash" >&2
-    exit 1
+  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+    YES_FLAG="--yes"
+    echo "Using TELEGRAM_BOT_TOKEN from the environment (non-interactive install)."
+  else
+    echo "Piped install detected. You will be prompted for your Telegram bot token in this terminal."
+    echo "Tip: get a token from @BotFather on Telegram (/newbot)."
+    echo ""
   fi
 fi
 

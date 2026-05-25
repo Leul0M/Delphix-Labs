@@ -53,10 +53,16 @@ From this repository root, run:
 python install.py
 ```
 
-Or install directly from GitHub using curl:
+Or install directly from GitHub using curl (you will be prompted for your bot token):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Leul0M/Delphix-Labs/main/install.sh | bash
+```
+
+Fully automated install (no prompts; token must be set first):
+
+```bash
+TELEGRAM_BOT_TOKEN="123456789:YOUR_TOKEN" curl -fsSL https://raw.githubusercontent.com/Leul0M/Delphix-Labs/main/install.sh | bash
 ```
 
 The installer will:
@@ -165,6 +171,16 @@ local-agent-cli/
 ---
 
 ## 🛠️ Troubleshooting
+
+### `TELEGRAM_BOT_TOKEN must be set for non-interactive install`
+
+This appeared on older installers when running `curl ... | bash` without a token. **Update to the latest `install.sh`** (or clone the repo and run `python install.py`), then run the curl command again — you should get prompts for your bot token in the same terminal.
+
+Alternatively, set the token before piping:
+
+```bash
+TELEGRAM_BOT_TOKEN="123456789:YOUR_TOKEN" curl -fsSL https://raw.githubusercontent.com/Leul0M/Delphix-Labs/main/install.sh | bash
+```
 
 ### Ollama is not running
 

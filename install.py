@@ -104,59 +104,75 @@ def is_interactive() -> bool:
     return sys.stdin.isatty()
 
 
-def get_user_input(prompt: str, default: str = "", yes: bool = False) -> str:
-    """Prompt the user for input (or return default / exit in non-interactive mode)."""
-    if yes:
-        return default
-
-    if not is_interactive():
-        print_error("No interactive input available. Run this installer from a terminal, or rerun with --yes to accept defaults.")
-        sys.exit(1)
-
-    try:
-        return input(prompt)
-    except EOFError:
-        print_error("No input available (stdin closed unexpectedly). Run this installer from a terminal.")
-        sys.exit(1)
-
-
-def require_user_input(prompt: str) -> str:
-    """Prompt the user for a REQUIRED value.
-    Opens the console TTY directly so it works even when stdin is piped."""
+def read_tty_line(prompt: str) -> Optional[str]:
+    """Read one line from the real terminal when stdin is piped (e.g. curl | bash)."""
     if sys.platform == "win32":
         if sys.stdin.isatty():
             try:
                 return input(prompt)
             except EOFError:
-                pass
+                return None
         try:
             with open("CONIN$", "r") as con:
                 sys.stdout.write(prompt)
                 sys.stdout.flush()
                 return con.readline().rstrip("\n\r")
         except OSError:
-            pass
-    else:
-        # Unix: /dev/tty works even when stdin is piped (curl | python3)
-        try:
-            with open("/dev/tty", "r") as tty:
-                sys.stdout.write(prompt)
-                sys.stdout.flush()
-                return tty.readline().rstrip("\n")
-        except (OSError, AttributeError):
-            pass
+            return None
 
-        if sys.stdin.isatty():
-            try:
-                return input(prompt)
-            except EOFError:
-                pass
+    try:
+        with open("/dev/tty", "r") as tty:
+            sys.stdout.write(prompt)
+            sys.stdout.flush()
+            return tty.readline().rstrip("\n")
+    except (OSError, AttributeError):
+        pass
+
+    if sys.stdin.isatty():
+        try:
+            return input(prompt)
+        except EOFError:
+            return None
+    return None
+
+
+def get_user_input(prompt: str, default: str = "", yes: bool = False) -> str:
+    """Prompt the user for input (or return default / exit in non-interactive mode)."""
+    if yes:
+        return default
+
+    if is_interactive():
+        try:
+            value = input(prompt)
+            return value if value else default
+        except EOFError:
+            print_error("No input available (stdin closed unexpectedly). Run this installer from a terminal.")
+            sys.exit(1)
+
+    line = read_tty_line(prompt)
+    if line is not None:
+        return line if line else default
 
     print_error(
         "Cannot read input. Run the installer in a terminal, or use --yes with "
         "TELEGRAM_BOT_TOKEN set in the environment."
     )
     sys.exit(1)
+
+
+def require_user_input(prompt: str) -> str:
+    """Prompt the user for a REQUIRED value (works when stdin is piped)."""
+    while True:
+        line = read_tty_line(prompt)
+        if line is None:
+            print_error(
+                "Cannot read input. Run the installer in a terminal, or use --yes with "
+                "TELEGRAM_BOT_TOKEN set in the environment."
+            )
+            sys.exit(1)
+        if line.strip():
+            return line.strip()
+        print_warning("This value is required. Please try again.")
 
 
 def parse_args():
@@ -622,10 +638,9 @@ def main():
     args = parse_args()
 
     if not is_interactive() and not args.yes:
-        print_warning("No interactive stdin detected.")
         print_info(
-            "Run in a terminal, or use --yes with TELEGRAM_BOT_TOKEN set "
-            "(e.g. TELEGRAM_BOT_TOKEN=... curl -fsSL .../install.sh | bash)."
+            "Piped install: prompts will appear in your terminal. "
+            "For a fully automated install, set TELEGRAM_BOT_TOKEN before piping."
         )
 
     clear()
