@@ -14,10 +14,50 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-from config.skills_manager import SkillsManager
+from config.skills_manager import SkillsManager, get_install_root
 
-DEFAULT_MODEL = "llama3.2:3b"
+DEFAULT_MODEL = "llama3.2:2b"
+FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "llama3.2:2b")
+# Models that often need 10GB+ RAM on Ollama — avoid on ~6GB machines
+HIGH_RAM_MODELS = frozenset(
+    {
+        "qwen3.5:4b",
+        "qwen3.5",
+        "qwen3:8b",
+        "qwen3:14b",
+        "mistral:7b",
+        "llama3.1:8b",
+        "llama3:8b",
+        "gemma3:4b",
+    }
+)
 MAX_ACTION_DEPTH = 4
+
+
+def is_memory_error(status: int, body: str) -> bool:
+    lower = body.lower()
+    return status == 500 and (
+        "system memory" in lower or "more system memory" in lower
+    )
+
+
+def persist_ollama_model_to_env(model: str) -> None:
+    """Update ~/local-agent/.env so the smaller model sticks after restart."""
+    env_path = get_install_root() / ".env"
+    if not env_path.is_file():
+        return
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    out: List[str] = []
+    found = False
+    for line in lines:
+        if line.startswith("OLLAMA_MODEL="):
+            out.append(f"OLLAMA_MODEL={model}")
+            found = True
+        else:
+            out.append(line)
+    if not found:
+        out.append(f"OLLAMA_MODEL={model}")
+    env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
 @dataclass
@@ -127,6 +167,15 @@ class Agent:
 
     def __init__(self, model: Optional[str] = None):
         self.model = model or os.getenv("OLLAMA_MODEL", DEFAULT_MODEL)
+        self._fallback_used = False
+        if self.model in HIGH_RAM_MODELS:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Model %s needs a lot of RAM; consider OLLAMA_MODEL=%s in .env",
+                self.model,
+                FALLBACK_MODEL,
+            )
         self.ollama_url = os.getenv(
             "OLLAMA_URL", "http://localhost:11434/api/chat"
         )
@@ -171,17 +220,57 @@ Rules:
 Users can force the skills path with: skill: "their message" (handled outside this prompt)."""
 
     def _format_ollama_error(self, status: int, body: str) -> str:
-        lower = body.lower()
-        if status == 500 and ("system memory" in lower or "more system memory" in lower):
+        if is_memory_error(status, body):
             return (
-                f"Not enough RAM to run `{self.model}`.\n\n"
-                "Use a smaller model in ~/local-agent/.env, e.g. OLLAMA_MODEL=llama3.2:3b\n"
-                "Then: ollama pull llama3.2:3b and restart ./run.sh"
+                f"Not enough RAM to run `{self.model}` (needs more than this PC has free).\n\n"
+                f"Fix on the Ollama PC:\n"
+                f"  ollama pull {FALLBACK_MODEL}\n"
+                f"  nano ~/local-agent/.env\n"
+                f"  OLLAMA_MODEL={FALLBACK_MODEL}\n"
+                f"  ./run.sh\n\n"
+                f"Other light models: gemma2:2b, phi3:mini, qwen2.5:3b"
             )
         return f"Ollama API error {status}: {body[:800]}"
 
+    async def _try_fallback_model(
+        self, messages: List[Dict[str, str]], temperature: float
+    ) -> Optional[str]:
+        """Switch to a smaller model and retry once after an OOM error from Ollama."""
+        if self._fallback_used or self.model == FALLBACK_MODEL:
+            return None
+        old_model = self.model
+        self.model = FALLBACK_MODEL
+        self._fallback_used = True
+        os.environ["OLLAMA_MODEL"] = FALLBACK_MODEL
+        persist_ollama_model_to_env(FALLBACK_MODEL)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self.ollama_url,
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": False,
+                    "options": {"temperature": temperature},
+                },
+            ) as response:
+                body = await response.text()
+                if response.status != 200:
+                    self.model = old_model
+                    return None
+                result = json.loads(body)
+                note = (
+                    f"⚠️ `{old_model}` needs ~12GB RAM; this PC only has ~6GB free.\n"
+                    f"Switched to `{FALLBACK_MODEL}` and updated .env automatically.\n"
+                    f"(Run once if needed: ollama pull {FALLBACK_MODEL})\n\n"
+                )
+                return note + result["message"]["content"]
+
     async def _ollama_chat(
-        self, messages: List[Dict[str, str]], temperature: float = 0.7
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        allow_fallback: bool = True,
     ) -> str:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -195,6 +284,10 @@ Users can force the skills path with: skill: "their message" (handled outside th
             ) as response:
                 body = await response.text()
                 if response.status != 200:
+                    if allow_fallback and is_memory_error(response.status, body):
+                        retried = await self._try_fallback_model(messages, temperature)
+                        if retried is not None:
+                            return retried
                     return self._format_ollama_error(response.status, body)
                 result = json.loads(body)
                 return result["message"]["content"]

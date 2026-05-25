@@ -18,7 +18,7 @@ from telegram.ext import (
     filters,
 )
 
-from config.agent import get_agent
+from config.agent import FALLBACK_MODEL, HIGH_RAM_MODELS, get_agent
 from config.ollama_service import ensure_ollama_background
 from config.skills_manager import SkillsManager, get_skills_dir
 
@@ -32,7 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:2b")
 
 
 def _ensure_runtime() -> bool:
@@ -50,9 +50,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if skills
         else "\n• 🧩 Skills folder ready (new tasks can create scripts)"
     )
+    ram_warn = ""
+    if OLLAMA_MODEL in HIGH_RAM_MODELS:
+        ram_warn = (
+            f"\n⚠️ `{OLLAMA_MODEL}` needs ~12GB RAM. This PC may only have ~6GB free.\n"
+            f"Change .env to OLLAMA_MODEL={FALLBACK_MODEL} and run: ollama pull {FALLBACK_MODEL}\n"
+        )
     await update.message.reply_text(
         "Delphix Labs is online.\n\n"
-        f"• Ollama model: {OLLAMA_MODEL}\n"
+        f"• Ollama model: {OLLAMA_MODEL}{ram_warn}\n"
         "• Telegram ↔ Ollama overlay active\n"
         f"{skill_note}\n\n"
         "Send any message — it goes to Ollama and the reply comes back here.\n"

@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 # Default Ollama model (~2–4 GB RAM). qwen3.5:4b needs ~12 GB — use only on high-RAM PCs.
-DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
-RECOMMENDED_LOW_RAM_MODELS = ("llama3.2:3b", "gemma2:2b", "phi3:mini", "qwen2.5:3b")
+DEFAULT_OLLAMA_MODEL = "llama3.2:2b"
+RECOMMENDED_LOW_RAM_MODELS = ("llama3.2:2b", "llama3.2:1b", "gemma2:2b", "phi3:mini", "qwen2.5:3b")
 
 REPO_ROOT = Path(__file__).resolve().parent
 REPO_RAW = os.environ.get(
@@ -582,6 +582,11 @@ def install_dependencies(install_dir: Path) -> bool:
 
 def configure_bot(install_dir: Path, token: str, model: str) -> None:
     """Write the .env configuration file with the provided token and model."""
+    if model in ("qwen3.5:4b", "qwen3.5") and model not in RECOMMENDED_LOW_RAM_MODELS:
+        print_warning(
+            f"{model} needs ~12GB+ RAM. Switching .env default to {DEFAULT_OLLAMA_MODEL}."
+        )
+        model = DEFAULT_OLLAMA_MODEL
     env_path = install_dir / ".env"
     env_content = f"""TELEGRAM_BOT_TOKEN={token}
 OLLAMA_MODEL={model}
@@ -763,7 +768,7 @@ def collect_install_settings(yes: bool) -> Optional[Tuple[Path, str, str]]:
 
     print()
     print_info("Which Ollama model should the agent use?")
-    print(f"{Colors.GRAY}    Default: {DEFAULT_OLLAMA_MODEL} (fits ~8 GB RAM or less){Colors.ENDC}")
+    print(f"{Colors.GRAY}    Default: {DEFAULT_OLLAMA_MODEL} (fits low RAM PCs){Colors.ENDC}")
     print(f"{Colors.GRAY}    Low RAM:   {', '.join(RECOMMENDED_LOW_RAM_MODELS)}{Colors.ENDC}")
     print(f"{Colors.GRAY}    High RAM:  qwen3.5:4b needs ~12 GB+ free memory{Colors.ENDC}")
     print(f"{Colors.GRAY}    Press Enter to use the default.{Colors.ENDC}")

@@ -69,7 +69,7 @@ The installer will:
 
 1. Verify Python is 3.8+.
 2. Ensure Ollama is installed (attempt install if missing).
-3. Pull the default model: **llama3.2:3b** (or another model that fits your RAM).
+3. Pull the default model: **llama3.2:2b** (or another model that fits your RAM).
 4. Start the Ollama server in the background.
 5. Create a virtual environment and install Python dependencies.
 6. Prompt for your Telegram bot token (from BotFather) and write it to `.env`.
@@ -143,7 +143,7 @@ Open Telegram and send messages to your bot:
 The installer creates a `.env` file with:
 
 - `TELEGRAM_BOT_TOKEN` — your bot token
-- `OLLAMA_MODEL` — model name (default `llama3.2:3b`)
+- `OLLAMA_MODEL` — model name (default `llama3.2:2b`)
 - `WORKSPACE_DIR` — where tools can operate (default `~/agent_workspace`)
 
 You can edit `.env` to change the model or bot token.
@@ -153,7 +153,7 @@ You can edit `.env` to change the model or bot token.
 Update `.env`:
 
 ```ini
-OLLAMA_MODEL=llama3.2:3b
+OLLAMA_MODEL=llama3.2:2b
 ```
 
 Then, pull the new model manually and restart the installer/agent:
@@ -207,14 +207,14 @@ The chosen model needs more RAM than the PC has free. **`qwen3.5:4b` needs about
 **Fix on the Ollama machine:**
 
 ```bash
-ollama pull llama3.2:3b
+ollama pull llama3.2:2b
 nano ~/local-agent/.env   # or edit .env on Windows
 ```
 
 Set:
 
 ```env
-OLLAMA_MODEL=llama3.2:3b
+OLLAMA_MODEL=llama3.2:2b
 ```
 
 Restart the bot:
