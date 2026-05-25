@@ -172,6 +172,10 @@ local-agent-cli/
 
 ## 🛠️ Troubleshooting
 
+### `Missing config directory at /tmp/config`
+
+The installer only had `install.py` in `/tmp`, not the full repo. **Use the latest `install.sh`** (it downloads `config/`, `requirements.txt`, etc.), or clone the repo and run `python install.py` from the project root.
+
 ### `TELEGRAM_BOT_TOKEN must be set for non-interactive install`
 
 This appeared on older installers when running `curl ... | bash` without a token. **Update to the latest `install.sh`** (or clone the repo and run `python install.py`), then run the curl command again — you should get prompts for your bot token in the same terminal.

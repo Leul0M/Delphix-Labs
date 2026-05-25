@@ -19,6 +19,46 @@ from typing import Optional, List, Tuple
 DEFAULT_OLLAMA_MODEL = "qwen3.5:4b"
 
 REPO_ROOT = Path(__file__).resolve().parent
+REPO_RAW = os.environ.get(
+    "REPO_RAW", "https://raw.githubusercontent.com/Leul0M/Delphix-Labs/main"
+).rstrip("/")
+OLLAMA_BIN = "ollama"
+
+# Relative paths fetched when install.py runs alone (e.g. curl install.py | python3)
+BUNDLE_PATHS = (
+    "requirements.txt",
+    "config/agent.py",
+    "config/telegram_bot.py",
+    "config/security.py",
+    "templates/.env.example",
+)
+
+
+def ensure_repo_bundle() -> bool:
+    """Download config/ and requirements from GitHub if missing next to install.py."""
+    if (REPO_ROOT / "config").is_dir() and (REPO_ROOT / "requirements.txt").is_file():
+        return True
+
+    print_info(f"Downloading project files from {REPO_RAW} ...")
+    try:
+        from urllib.request import urlopen
+    except ImportError:
+        print_error("urllib is unavailable; run install.sh or clone the full repository.")
+        return False
+
+    for rel in BUNDLE_PATHS:
+        dest = REPO_ROOT / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        url = f"{REPO_RAW}/{rel}"
+        try:
+            with urlopen(url, timeout=60) as resp:
+                dest.write_bytes(resp.read())
+        except Exception as e:
+            print_error(f"Failed to download {url}: {e}")
+            return False
+
+    print_success("Project files downloaded.")
+    return True
 
 
 def _configure_console_encoding() -> None:
@@ -210,14 +250,48 @@ def check_python_version() -> bool:
     print_error(f"Python 3.8+ required, found {version.major}.{version.minor}")
     return False
 
+def resolve_ollama_cmd() -> Optional[str]:
+    """Locate ollama binary (PATH or common Windows install paths)."""
+    global OLLAMA_BIN
+    found = shutil.which("ollama")
+    if found:
+        OLLAMA_BIN = found
+        return found
+    if sys.platform == "win32":
+        for p in (
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe",
+            Path(os.environ.get("ProgramFiles", "")) / "Ollama" / "ollama.exe",
+        ):
+            if p.is_file():
+                OLLAMA_BIN = str(p)
+                return OLLAMA_BIN
+    return None
+
+
+def ollama_cmd(*args: str) -> List[str]:
+    return [OLLAMA_BIN, *args]
+
+
 def check_ollama() -> bool:
     """Check if Ollama is installed"""
-    if shutil.which("ollama"):
-        print_success("Ollama is installed")
+    if resolve_ollama_cmd():
+        print_success(f"Ollama is installed ({OLLAMA_BIN})")
         return True
-    
+
     print_warning("Ollama not found")
     return False
+
+
+def model_is_pulled(model: str) -> bool:
+    """Return True if the model appears in `ollama list`."""
+    success, output = run_command(ollama_cmd("list"), check=False)
+    if not success:
+        return False
+    if model in output:
+        return True
+    base = model.split(":")[0]
+    return any(line.startswith(base) for line in output.splitlines())
+
 
 def install_ollama():
     """Install Ollama based on OS"""
@@ -256,11 +330,15 @@ def install_ollama():
         return False
 
 def pull_model(model: str = DEFAULT_OLLAMA_MODEL) -> bool:
-    """Pull Ollama model"""
+    """Pull Ollama model (skip if already present)."""
+    if model_is_pulled(model):
+        print_success(f"Model {model} is already installed")
+        return True
+
     print_info(f"Pulling model {model} (this may take a few minutes)...")
     print(f"{Colors.GRAY}    Download progress:{Colors.ENDC}")
     
-    success, output = run_command(["ollama", "pull", model], check=False)
+    success, output = run_command(ollama_cmd("pull", model), check=False)
     
     if success:
         print_success(f"Model {model} ready")
@@ -293,7 +371,7 @@ def start_ollama_server(log_file: Optional[Path] = None) -> Optional[subprocess.
     except Exception:
         stdout = subprocess.DEVNULL
 
-    cmd = ["ollama", "serve"]
+    cmd = ollama_cmd("serve")
     try:
         if sys.platform == "win32":
             proc = subprocess.Popen(
@@ -352,6 +430,9 @@ Try: "Read the file welcome.txt"
 def clone_or_create_project(install_dir: Path) -> bool:
     """Copy project files from this repository into the install directory."""
     print_info("Setting up project files...")
+
+    if not ensure_repo_bundle():
+        return False
 
     config_src = REPO_ROOT / "config"
     if not config_src.is_dir():

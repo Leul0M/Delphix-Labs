@@ -6,7 +6,15 @@ set -euo pipefail
 
 # Allow overriding the repo root via environment variable
 REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/Leul0M/Delphix-Labs/main}"
-INSTALL_PY_URL="$REPO_RAW/install.py"
+# Files needed beside install.py (install.py copies these into ~/local-agent)
+BUNDLE_FILES=(
+  install.py
+  requirements.txt
+  config/agent.py
+  config/telegram_bot.py
+  config/security.py
+  templates/.env.example
+)
 
 PYTHON_CMD=""
 if command -v python3 >/dev/null 2>&1; then
@@ -33,14 +41,23 @@ if [ ! -t 0 ]; then
   fi
 fi
 
-TMP_PY=$(mktemp /tmp/delphix-install.XXXXXX.py)
-trap 'rm -f "$TMP_PY"' EXIT
+TMP_DIR=$(mktemp -d /tmp/delphix-install.XXXXXX)
+trap 'rm -rf "$TMP_DIR"' EXIT
 
-echo "Downloading installer..."
-if ! curl -fsSL "$INSTALL_PY_URL" -o "$TMP_PY"; then
-  echo "Failed to download install.py from $INSTALL_PY_URL" >&2
-  exit 1
-fi
+fetch_raw() {
+  local rel="$1"
+  local dest="$TMP_DIR/$rel"
+  mkdir -p "$(dirname "$dest")"
+  if ! curl -fsSL "$REPO_RAW/$rel" -o "$dest"; then
+    echo "Failed to download $REPO_RAW/$rel" >&2
+    exit 1
+  fi
+}
+
+echo "Downloading installer bundle..."
+for rel in "${BUNDLE_FILES[@]}"; do
+  fetch_raw "$rel"
+done
 
 echo "Running installer..."
-$PYTHON_CMD "$TMP_PY" "$@" $YES_FLAG
+$PYTHON_CMD "$TMP_DIR/install.py" "$@" $YES_FLAG
