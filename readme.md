@@ -27,10 +27,10 @@ Delphix Labs provides a lightweight local AI agent framework that runs on your m
 
 ## ✅ What it does
 
-- Installs and configures a local Telegram bot that acts as an AI assistant.
-- Pulls and runs an Ollama model (`qwen3.5:4b` by default).
-- Starts an Ollama server locally and connects the bot to it.
-- Provides a basic tool system (read files, run shell commands) with safe boundaries.
+- **Telegram overlay on Ollama** — every message goes to your local model; replies return on Telegram.
+- **Ollama in the background** — `ollama serve` starts automatically when you run the bot.
+- **Skills folder** — when Ollama cannot do a task directly, it can save a reusable Python script under `skills/` and use it again later.
+- Built-in tools: read files, run shell commands (in `~/agent_workspace`).
 
 ---
 
@@ -69,7 +69,7 @@ The installer will:
 
 1. Verify Python is 3.8+.
 2. Ensure Ollama is installed (attempt install if missing).
-3. Pull the default model: **qwen3.5:4b**.
+3. Pull the default model: **llama3.2:3b** (or another model that fits your RAM).
 4. Start the Ollama server in the background.
 5. Create a virtual environment and install Python dependencies.
 6. Prompt for your Telegram bot token (from BotFather) and write it to `.env`.
@@ -79,11 +79,21 @@ The installer will:
 
 ## 🧩 How it works
 
-### 1) Ollama server
+### 1) Telegram ↔ Ollama overlay
 
-- Ollama runs locally on `http://localhost:11434`.
-- The installer starts `ollama serve` in the background and logs output to `ollama.log`.
-- The agent communicates with Ollama via its HTTP API.
+```
+Telegram message → Python bot → Ollama API → reply → Telegram
+```
+
+- Ollama runs locally on `http://localhost:11434` (started in the background by `run.sh` / `run.bat`).
+- The Python layer does not replace Ollama — it routes chat and runs tools/skills when needed.
+
+### 2) Skills folder
+
+- Path: `~/local-agent/skills/` (or your install directory).
+- Each skill: `name.py` + `name.json` (must define `def run(**kwargs) -> str`).
+- List skills in Telegram: `/skills`
+- The model reuses saved skills before writing new ones.
 
 ### 2) Telegram bot
 
@@ -133,7 +143,7 @@ Open Telegram and send messages to your bot:
 The installer creates a `.env` file with:
 
 - `TELEGRAM_BOT_TOKEN` — your bot token
-- `OLLAMA_MODEL` — model name (default `qwen3.5:4b`)
+- `OLLAMA_MODEL` — model name (default `llama3.2:3b`)
 - `WORKSPACE_DIR` — where tools can operate (default `~/agent_workspace`)
 
 You can edit `.env` to change the model or bot token.
@@ -143,7 +153,7 @@ You can edit `.env` to change the model or bot token.
 Update `.env`:
 
 ```ini
-OLLAMA_MODEL=qwen3.5:4b
+OLLAMA_MODEL=llama3.2:3b
 ```
 
 Then, pull the new model manually and restart the installer/agent:
@@ -189,6 +199,31 @@ Alternatively, set the token before piping:
 ```bash
 TELEGRAM_BOT_TOKEN="123456789:YOUR_TOKEN" curl -fsSL https://raw.githubusercontent.com/Leul0M/Delphix-Labs/main/install.sh | bash
 ```
+
+### `model requires more system memory` (Ollama 500)
+
+The chosen model needs more RAM than the PC has free. **`qwen3.5:4b` needs about 12 GB**; many laptops only have ~6–8 GB free.
+
+**Fix on the Ollama machine:**
+
+```bash
+ollama pull llama3.2:3b
+nano ~/local-agent/.env   # or edit .env on Windows
+```
+
+Set:
+
+```env
+OLLAMA_MODEL=llama3.2:3b
+```
+
+Restart the bot:
+
+```bash
+cd ~/local-agent && ./run.sh
+```
+
+Other models that usually fit **8 GB RAM or less**: `gemma2:2b`, `phi3:mini`, `qwen2.5:3b`.
 
 ### Ollama is not running
 

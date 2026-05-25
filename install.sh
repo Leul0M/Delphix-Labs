@@ -10,9 +10,15 @@ REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/Leul0M/Delphix-Labs/main
 BUNDLE_FILES=(
   install.py
   requirements.txt
+  config/__init__.py
   config/agent.py
   config/telegram_bot.py
+  config/ollama_service.py
+  config/skills_manager.py
   config/security.py
+  skills/README.md
+  skills/list_workspace.py
+  skills/list_workspace.json
   templates/.env.example
 )
 

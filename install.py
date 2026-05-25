@@ -15,8 +15,9 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
-# Default Ollama model
-DEFAULT_OLLAMA_MODEL = "qwen3.5:4b"
+# Default Ollama model (~2–4 GB RAM). qwen3.5:4b needs ~12 GB — use only on high-RAM PCs.
+DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
+RECOMMENDED_LOW_RAM_MODELS = ("llama3.2:3b", "gemma2:2b", "phi3:mini", "qwen2.5:3b")
 
 REPO_ROOT = Path(__file__).resolve().parent
 REPO_RAW = os.environ.get(
@@ -27,9 +28,15 @@ OLLAMA_BIN = "ollama"
 # Relative paths fetched when install.py runs alone (e.g. curl install.py | python3)
 BUNDLE_PATHS = (
     "requirements.txt",
+    "config/__init__.py",
     "config/agent.py",
     "config/telegram_bot.py",
+    "config/ollama_service.py",
+    "config/skills_manager.py",
     "config/security.py",
+    "skills/README.md",
+    "skills/list_workspace.py",
+    "skills/list_workspace.json",
     "templates/.env.example",
 )
 
@@ -444,6 +451,17 @@ def clone_or_create_project(install_dir: Path) -> bool:
         shutil.rmtree(config_dir)
     shutil.copytree(config_src, config_dir)
 
+    skills_src = REPO_ROOT / "skills"
+    skills_dir = install_dir / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    if skills_src.is_dir():
+        for item in skills_src.iterdir():
+            dest = skills_dir / item.name
+            if item.is_file():
+                shutil.copy2(item, dest)
+            elif item.is_dir() and not dest.exists():
+                shutil.copytree(item, dest)
+
     req_src = REPO_ROOT / "requirements.txt"
     if req_src.is_file():
         shutil.copy2(req_src, install_dir / "requirements.txt")
@@ -461,13 +479,20 @@ def clone_or_create_project(install_dir: Path) -> bool:
             f"WORKSPACE_DIR=~/agent_workspace\n"
         )
     
-    # Write run.sh
+    # Write run.sh — Ollama in background, then Telegram overlay
     run_script = '''#!/bin/bash
+cd "$(dirname "$0")"
+export DELPHIX_INSTALL_DIR="$(pwd)"
 source venv/bin/activate
 if [ -f .env ]; then
-    export $(cat .env | xargs)
-else
-    echo "Warning: .env file not found. Make sure OLLAMA_MODEL and TELEGRAM_BOT_TOKEN are set."
+    set -a
+    source .env
+    set +a
+fi
+if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+  echo "Starting Ollama in background (ollama.log)..."
+  nohup ollama serve >> ollama.log 2>&1 &
+  sleep 2
 fi
 python -m config.telegram_bot
 '''
@@ -476,11 +501,18 @@ python -m config.telegram_bot
     
     # Write run.bat for Windows
     run_bat = '''@echo off
+cd /d "%~dp0"
+set DELPHIX_INSTALL_DIR=%CD%
 call venv\\\\Scripts\\\\activate.bat
 if exist .env (
-    for /f "tokens=*" %%a in (.env) do set %%a
-) else (
-    echo Warning: .env file not found. Make sure OLLAMA_MODEL and TELEGRAM_BOT_TOKEN are set.
+    for /f "usebackq tokens=1,* delims==" %%a in (".env") do set %%a=%%b
+)
+where ollama >nul 2>&1 && (
+  curl -sf http://localhost:11434/api/tags >nul 2>&1 || (
+    echo Starting Ollama in background...
+    start /B ollama serve >> ollama.log 2>&1
+    timeout /t 2 /nobreak >nul
+  )
 )
 python -m config.telegram_bot
 '''
@@ -731,8 +763,9 @@ def collect_install_settings(yes: bool) -> Optional[Tuple[Path, str, str]]:
 
     print()
     print_info("Which Ollama model should the agent use?")
-    print(f"{Colors.GRAY}    Default: {DEFAULT_OLLAMA_MODEL}{Colors.ENDC}")
-    print(f"{Colors.GRAY}    Other options: llama3.2:3b  mistral:7b  gemma3:4b{Colors.ENDC}")
+    print(f"{Colors.GRAY}    Default: {DEFAULT_OLLAMA_MODEL} (fits ~8 GB RAM or less){Colors.ENDC}")
+    print(f"{Colors.GRAY}    Low RAM:   {', '.join(RECOMMENDED_LOW_RAM_MODELS)}{Colors.ENDC}")
+    print(f"{Colors.GRAY}    High RAM:  qwen3.5:4b needs ~12 GB+ free memory{Colors.ENDC}")
     print(f"{Colors.GRAY}    Press Enter to use the default.{Colors.ENDC}")
     model_input = require_user_input(
         f"{Colors.CYAN}Ollama model [{DEFAULT_OLLAMA_MODEL}]: {Colors.ENDC}"

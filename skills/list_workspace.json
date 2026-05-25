@@ -1,0 +1,5 @@
+{
+  "skill_id": "list_workspace",
+  "description": "List files in the agent workspace directory",
+  "parameters": {}
+}
